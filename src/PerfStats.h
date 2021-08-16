@@ -99,6 +99,7 @@ struct PerfStats {
     static std::unique_ptr<PerfStats> getStats(int coreId);
     static void releaseStats(std::unique_ptr<PerfStats> perfStats);
     static void collectStats(PerfStats* total, CorePolicy::CoreList coreList);
+    void reset();
 };
 }  // namespace Arachne
 

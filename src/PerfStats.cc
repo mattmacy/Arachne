@@ -33,6 +33,12 @@ PerfStats::PerfStats(int coreId) {
     this->coreId = coreId;
 }
 
+void PerfStats::reset() {
+    int coreId = this->coreId;
+
+    memset(this, 0, sizeof(*this));
+    this->coreId = coreId;
+}
 /**
  * This method must be called obtain the PerfStats structure belonging to a
  * core. Typically this method is invoked once each time a kernel thread
@@ -99,7 +105,7 @@ PerfStats::releaseStats(std::unique_ptr<PerfStats> perfStats) {
 void
 PerfStats::collectStats(PerfStats* total, CorePolicy::CoreList coreList) {
     std::lock_guard<SpinLock> lock(mutex);
-    memset(total, 0, sizeof(*total));
+    total->reset();
     total->collectionTime = Cycles::rdtsc();
     total->cyclesPerSecond = Cycles::perSecond();
     for (size_t i = 0; i < coreList.size(); i++) {

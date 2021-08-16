@@ -225,9 +225,9 @@ initializeCore(Core* core) {
     // All cores initially poll for work on context 0's stack.
     core->localPinnedContexts->store(1U);
 
-    core->highPriorityThreads = reinterpret_cast<std::atomic<uint64_t>*>(
-        alignedAlloc(sizeof(std::atomic<uint64_t>)));
-    memset(core->highPriorityThreads, 0, sizeof(std::atomic<uint64_t>));
+	void *p = alignedAlloc(sizeof(std::atomic<uint64_t>));
+    memset(p, 0, sizeof(std::atomic<uint64_t>));
+    core->highPriorityThreads = reinterpret_cast<std::atomic<uint64_t>*>(p);
 
     // Allocate stacks and contexts
     ThreadContext** contexts = new ThreadContext*[maxThreadsPerCore];
@@ -1122,10 +1122,9 @@ init(int* argcp, const char** argv) {
     allHighPriorityThreads.resize(numHardwareCores);
     allThreadContexts.resize(numHardwareCores);
     for (unsigned int i = 0; i < numHardwareCores; i++) {
-        occupiedAndCount[i] =
-            reinterpret_cast<std::atomic<Arachne::MaskAndCount>*>(
-                alignedAlloc(sizeof(std::atomic<MaskAndCount>)));
-        memset(occupiedAndCount[i], 0, sizeof(std::atomic<MaskAndCount>));
+		void *p = alignedAlloc(sizeof(std::atomic<MaskAndCount>));
+        memset(p, 0, sizeof(std::atomic<MaskAndCount>));
+        occupiedAndCount[i] = reinterpret_cast<std::atomic<Arachne::MaskAndCount>*>(p);
 
         // Allocate all the thread contexts and stacks
         ThreadContext** contexts = new ThreadContext*[maxThreadsPerCore];
