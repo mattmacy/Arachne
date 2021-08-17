@@ -124,6 +124,7 @@ struct ThreadId {
 };
 
 void init(int* argcp = NULL, const char** argv = NULL);
+void init_static(uint32_t numCores, std::vector<uint32_t> *coreList);
 void shutDown();
 void waitForTermination();
 void yield();

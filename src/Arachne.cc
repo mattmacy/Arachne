@@ -13,16 +13,21 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+
 #include <stdio.h>
 #include <thread>
+#ifndef DISABLE_ARBITER
 #include "CoreArbiter/CoreArbiterClient.h"
+#endif
 #include "CorePolicy.h"
 #include "DefaultCorePolicy.h"
 #include "PerfUtils/TimeTrace.h"
 #include "PerfUtils/Util.h"
 
 #include "Arachne.h"
+#ifndef DISABLE_ARBITER
 #include "CoreArbiter/ArbiterClientShim.h"
+#endif
 
 namespace Arachne {
 
@@ -30,7 +35,9 @@ namespace Arachne {
 // this file.
 #define TIME_TRACE 0
 
+#ifndef DISABLE_ARBITER
 using CoreArbiter::CoreArbiterClient;
+#endif
 using PerfUtils::Cycles;
 using PerfUtils::TimeTrace;
 using PerfUtils::Util::prefetch;
@@ -96,6 +103,11 @@ int stackSize = 1024 * 1024;
  */
 std::vector<std::thread> kernelThreads;
 std::vector<void*> kernelThreadStacks;
+
+/*
+ * Caller supplied vector of available cores
+ */
+std::vector<uint32_t> *availableCores;
 
 /**
  * Alert the kernel threads that they should exit immediately. This is used
@@ -170,7 +182,9 @@ thread_local bool NestedDispatchDetector::dispatchRunning;
 bool useCoreArbiter = true;
 
 std::string coreArbiterSocketPath;
+#ifndef DISABLE_ARBITER
 CoreArbiterClient* coreArbiter = NULL;
+#endif
 
 /*
  *  The CorePolicy that Arachne will use.
@@ -248,6 +262,25 @@ deinitializeCore(Core* core) {
     free(core->highPriorityThreads);
 }
 
+#ifdef DISABLE_ARBITER
+uint32_t
+getNextAvailable()
+{
+    assert(availableCores->size());
+
+	int rc;
+	cpu_set_t bind_set;
+    uint32_t next = availableCores->back();
+	pthread_t curthread = pthread_self();
+    availableCores->pop_back();
+	CPU_ZERO(&bind_set);
+	CPU_SET(next, bind_set);
+	if ((rc = pthread_setaffinity_np(curthread, sizeof(cpu_set_t), &bind_set)))
+		errx(rc, "pthread_setaffinity_np failed");
+	return next;
+}
+#endif
+
 /**
  * Main function for a kernel thread, which roughly corresponds to a core.
  */
@@ -258,9 +291,12 @@ threadMain() {
 
     initializeCore(&core);
     for (;;) {
+#ifndef DISABLE_ARBITER
         // Get id from coreArbiter
         core.id = coreArbiter->blockUntilCoreAvailable();
-
+#else
+        core.id = getNextAvailable();
+#endif
         // Associate this thread's PerfStats pointer with the proper value for
         // the core this thread is executing on.
         PerfStats::threadStats = PerfStats::getStats(core.id);
@@ -343,8 +379,9 @@ threadMain() {
         PerfStats::releaseStats(std::move(PerfStats::threadStats));
     }
     deinitializeCore(&core);
-
+#ifndef DISABLE_ARBITER
     coreArbiter->unregisterThread();
+#endif
 }
 
 /**
@@ -867,7 +904,9 @@ waitForTermination() {
     pinnedContexts.clear();
     allHighPriorityThreads.clear();
     PerfUtils::Util::serialize();
+#ifndef DISABLE_ARBITER
     coreArbiter->reset();
+#endif
     delete corePolicy;
     corePolicy = NULL;
     initialized = false;
@@ -1083,6 +1122,7 @@ init(int* argcp, const char** argv) {
 
     parseOptions(argcp, argv);
 
+#ifndef DISABLE_ARBITER
     if (!useCoreArbiter) {
         coreArbiter = ArbiterClientShim::getInstance();
     } else if (coreArbiterSocketPath.empty()) {
@@ -1090,6 +1130,7 @@ init(int* argcp, const char** argv) {
     } else {
         coreArbiter = CoreArbiterClient::getInstance(coreArbiterSocketPath);
     }
+#endif
 
     volatile uint32_t numHardwareCores = std::thread::hardware_concurrency();
     // CoreArbiter reserves 1 core to run non-Arachne threads.
@@ -1110,6 +1151,18 @@ init(int* argcp, const char** argv) {
                     "hardware cores %d.",
                     maxNumCores, hardwareCoresAvailable);
     }
+	init_static(numHardwareCores, nullptr);
+}
+
+void
+init_static(uint32_t numHardwareCores, std::vector<uint32_t> *coreList)
+{
+#ifdef DISABLE_ARBITER
+	disableLoadEstimation = true;
+	assert(numHardwareCores == coreList->size());
+	maxNumCores = minNumCores = coreList->size();
+	availableCores = coreList;
+#endif
 
     if (corePolicy == NULL) {
         corePolicy = new DefaultCorePolicy(maxNumCores, !disableLoadEstimation);
@@ -1146,9 +1199,11 @@ init(int* argcp, const char** argv) {
     // begin to use it in a new thread.
     PerfUtils::Util::serialize();
 
+#ifndef DISABLE_ARBITER
     // Request the mininum number of cores.
     std::vector<uint32_t> coreRequest({minNumCores, 0, 0, 0, 0, 0, 0, 0});
     coreArbiter->setRequestedCores(coreRequest);
+#endif
 
     // Note that the main thread is not part of the thread pool.
     for (unsigned int i = 0; i < maxNumCores; i++) {
@@ -1220,9 +1275,11 @@ shutDown() {
     // Tell all the kernel threads to terminate at the first opportunity.
     shutdown = true;
 
+#ifndef DISABLE_ARBITER
     // Unblock all cores so they can shut down and be joined.
     std::vector<uint32_t> coreRequest({maxNumCores, 0, 0, 0, 0, 0, 0, 0});
     coreArbiter->setRequestedCores(coreRequest);
+#endif
 }
 
 /**
@@ -1462,10 +1519,12 @@ setCoreCount(uint32_t desiredNumCores) {
     if (desiredNumCores < minNumCores || desiredNumCores > maxNumCores)
         return;
 
+#ifndef DISABLE_ARBITER
     ARACHNE_LOG(NOTICE, "Attempting to change number of cores: %u --> %u\n",
                 numActiveCores.load(), desiredNumCores);
     std::vector<uint32_t> coreRequest({desiredNumCores, 0, 0, 0, 0, 0, 0, 0});
     coreArbiter->setRequestedCores(coreRequest);
+#endif
 }
 
 /**
@@ -1473,9 +1532,11 @@ setCoreCount(uint32_t desiredNumCores) {
  */
 void
 checkForArbiterRequest() {
+#ifndef DISABLE_ARBITER
     // The Core Arbiter wants us to release the core running this check.
     if (coreArbiter->mustReleaseCore())
         descheduleCore();
+#endif
 }
 
 /**
