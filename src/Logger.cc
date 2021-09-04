@@ -22,7 +22,7 @@ using PerfUtils::Cycles;
 namespace Arachne {
 
 extern FILE* errorStream;
-LogLevel Logger::displayMinLevel = DEBUG;
+LogLevel Logger::displayMinLevel = DEBUGLOG;
 std::mutex Logger::mutex;
 PerfUtils::Initialize Logger::_(Logger::init);
 uint64_t Logger::startingTsc;

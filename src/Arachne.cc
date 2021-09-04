@@ -27,6 +27,8 @@
 #include "Arachne.h"
 #ifndef DISABLE_ARBITER
 #include "CoreArbiter/ArbiterClientShim.h"
+#else
+#include <err.h>
 #endif
 
 namespace Arachne {
@@ -107,7 +109,9 @@ std::vector<void*> kernelThreadStacks;
 /*
  * Caller supplied vector of available cores
  */
-std::vector<uint32_t> *availableCores;
+static cpu_set_t avail_cpu_set;
+
+pthread_mutex_t avail_lock;
 
 /**
  * Alert the kernel threads that they should exit immediately. This is used
@@ -266,18 +270,25 @@ deinitializeCore(Core* core) {
 uint32_t
 getNextAvailable()
 {
-    assert(availableCores->size());
+    pthread_mutex_lock(&avail_lock);
+    int next = 0;
+    for (int i = 0; i < CPU_SETSIZE; i++) {
+        if (CPU_ISSET(i, &avail_cpu_set)) {
+            next = i;
+            CPU_CLR(next, &avail_cpu_set);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&avail_lock);
+    assert(next);
+    pthread_t curthread = pthread_self();
+    cpu_set_t bind_set;
 
-	int rc;
-	cpu_set_t bind_set;
-    uint32_t next = availableCores->back();
-	pthread_t curthread = pthread_self();
-    availableCores->pop_back();
-	CPU_ZERO(&bind_set);
-	CPU_SET(next, bind_set);
-	if ((rc = pthread_setaffinity_np(curthread, sizeof(cpu_set_t), &bind_set)))
-		errx(rc, "pthread_setaffinity_np failed");
-	return next;
+    CPU_ZERO(&bind_set);
+    CPU_SET(next, &bind_set);
+    if (int rc = pthread_setaffinity_np(curthread, sizeof(cpu_set_t), &bind_set))
+        errx(rc, "pthread_setaffinity_np failed");
+    return next;
 }
 #endif
 
@@ -339,7 +350,7 @@ threadMain() {
         // This marks the point at which new thread creations may begin.
         corePolicy->coreAvailable(core.id);
         numActiveCores++;
-        ARACHNE_LOG(DEBUG, "Number of cores increased from %d to %d\n",
+        ARACHNE_LOG(DEBUGLOG, "Number of cores increased from %d to %d\n",
                     numActiveCores - 1, numActiveCores.load());
 #if TIME_TRACE
         TimeTrace::record("Core Count %d --> %d", numActiveCores - 1,
@@ -364,7 +375,7 @@ threadMain() {
             PerfStats::releaseStats(std::move(PerfStats::threadStats));
             break;
         }
-        ARACHNE_LOG(DEBUG,
+        ARACHNE_LOG(DEBUGLOG,
                     "Number of cores decreased from %d to %d\n; Core %d "
                     "going offline.",
                     numActiveCores + 1, numActiveCores.load(), core.id);
@@ -1151,17 +1162,20 @@ init(int* argcp, const char** argv) {
                     "hardware cores %d.",
                     maxNumCores, hardwareCoresAvailable);
     }
-	init_static(numHardwareCores, nullptr);
+    init_static(nullptr);
 }
 
 void
-init_static(uint32_t numHardwareCores, std::vector<uint32_t> *coreList)
+init_static(const cpu_set_t *cpu_set)
 {
+    volatile uint32_t numHardwareCores = std::thread::hardware_concurrency();
 #ifdef DISABLE_ARBITER
-	disableLoadEstimation = true;
-	assert(numHardwareCores == coreList->size());
-	maxNumCores = minNumCores = coreList->size();
-	availableCores = coreList;
+    assert(cpu_set);
+    disableLoadEstimation = true;
+    maxNumCores = minNumCores = CPU_COUNT(cpu_set);
+    pthread_mutex_init(&avail_lock, NULL);
+    CPU_ZERO(&avail_cpu_set);
+    CPU_OR(&avail_cpu_set, &avail_cpu_set, cpu_set);
 #endif
 
     if (corePolicy == NULL) {
@@ -1335,6 +1349,11 @@ SleepLock::unlock() {
     signal(blockedThreads.front());
     blockedThreads.pop_front();
     blockedThreadsLock.unlock();
+}
+
+bool
+SleepLock::owned() {
+    return owner != nullptr;
 }
 
 ConditionVariable::ConditionVariable() : blockedThreads() {}

@@ -124,7 +124,7 @@ struct ThreadId {
 };
 
 void init(int* argcp = NULL, const char** argv = NULL);
-void init_static(uint32_t numCores, std::vector<uint32_t> *coreList);
+void init_static(const cpu_set_t *cpu_set);
 void shutDown();
 void waitForTermination();
 void yield();
@@ -165,6 +165,7 @@ class SleepLock {
     void lock();
     bool try_lock();
     void unlock();
+    bool owned();
 
   private:
     // Ordered collection of threads that are waiting on this lock. Threads

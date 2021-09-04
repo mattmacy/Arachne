@@ -69,7 +69,7 @@ CoreLoadEstimator::estimate(CorePolicy::CoreList coreList) {
             utilizationThresholds[curActiveCores - 1] -
             idleCoreFractionHysteresis * (curActiveCores - 1);
 
-        ARACHNE_LOG(DEBUG,
+        ARACHNE_LOG(DEBUGLOG,
                     "curActiveCores = %d, totalUtilizedCores = %lf, "
                     "localThreshold = %lf, averageloadFactor = %lf, "
                     "loadFactorThreshold = %lf\n",
@@ -102,7 +102,7 @@ CoreLoadEstimator::estimate(CorePolicy::CoreList coreList) {
         }
         return 0;
     } else if (estimationStrategy == UTILIZATION) {
-        ARACHNE_LOG(DEBUG,
+        ARACHNE_LOG(DEBUGLOG,
                     "curActiveCores = %d, totalUtilizedCores = %lf, "
                     "maxUtilization = %lf\n",
                     curActiveCores, totalUtilizedCores, maxUtilization);
