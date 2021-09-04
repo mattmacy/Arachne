@@ -16,9 +16,12 @@
 
 #include <stdio.h>
 #include <thread>
+
 #ifndef DISABLE_ARBITER
 #include "CoreArbiter/CoreArbiterClient.h"
 #endif
+
+#include "CoreArbiter/Semaphore.h"
 #include "CorePolicy.h"
 #include "DefaultCorePolicy.h"
 #include "PerfUtils/TimeTrace.h"
@@ -43,6 +46,8 @@ using CoreArbiter::CoreArbiterClient;
 using PerfUtils::Cycles;
 using PerfUtils::TimeTrace;
 using PerfUtils::Util::prefetch;
+
+extern std::vector<::Semaphore*> coreIdleSemaphores;
 
 /**
  * This variable prevents multiple initializations of the library, but does
