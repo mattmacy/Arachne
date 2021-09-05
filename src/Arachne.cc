@@ -47,8 +47,6 @@ using PerfUtils::Cycles;
 using PerfUtils::TimeTrace;
 using PerfUtils::Util::prefetch;
 
-extern std::vector<::Semaphore*> coreIdleSemaphores;
-
 /**
  * This variable prevents multiple initializations of the library, but does
  * not protect against the user calling Arachne functions without initializing
@@ -1299,66 +1297,6 @@ shutDown() {
     std::vector<uint32_t> coreRequest({maxNumCores, 0, 0, 0, 0, 0, 0, 0});
     coreArbiter->setRequestedCores(coreRequest);
 #endif
-}
-
-/**
- * Attempt to acquire this resource and block if it is not available.
- */
-void
-SleepLock::lock() {
-    std::unique_lock<SpinLock> guard(blockedThreadsLock);
-    if (owner == NULL) {
-        owner = core.loadedContext;
-        return;
-    }
-    blockedThreads.push_back(getThreadId());
-    guard.unlock();
-    while (true) {
-        // Spurious wake-ups can happen due to signalers of past inhabitants of
-        // this core.loadedContext.
-        dispatch();
-        blockedThreadsLock.lock();
-        if (owner == core.loadedContext) {
-            blockedThreadsLock.unlock();
-            break;
-        }
-        blockedThreadsLock.unlock();
-    }
-}
-
-/**
- * Attempt to acquire this resource once.
- * \return
- *    Whether or not the acquisition succeeded.
- */
-bool
-SleepLock::try_lock() {
-    std::lock_guard<SpinLock> guard(blockedThreadsLock);
-    if (owner == NULL) {
-        owner = core.loadedContext;
-        return true;
-    }
-    return false;
-}
-
-/** Release resource. */
-void
-SleepLock::unlock() {
-    blockedThreadsLock.lock();
-    if (blockedThreads.empty()) {
-        owner = NULL;
-        blockedThreadsLock.unlock();
-        return;
-    }
-    owner = blockedThreads.front().context;
-    signal(blockedThreads.front());
-    blockedThreads.pop_front();
-    blockedThreadsLock.unlock();
-}
-
-bool
-SleepLock::owned() {
-    return owner != nullptr;
 }
 
 ConditionVariable::ConditionVariable() : blockedThreads() {}

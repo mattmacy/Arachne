@@ -30,6 +30,7 @@
 #include "Common.h"
 #include "CorePolicy.h"
 #include "Logger.h"
+#include "ThreadId.h"
 #include "PerfStats.h"
 #include "PerfUtils/Cycles.h"
 #include "PerfUtils/Util.h"
@@ -87,39 +88,6 @@ extern bool disableLoadEstimation;
  * Arachne::createThread(), should only be called from within Arachne threads.
  * @{
  */
-/**
- * This structure is used to identify an Arachne thread to methods of the
- * Arachne API.
- */
-struct ThreadId {
-    /// The storage where this thread's state is held.
-    ThreadContext* context;
-    /// Differentiates this Arachne thread from previous threads (now defunct)
-    /// that used the same context.
-    uint32_t generation;
-
-    /// Construct a ThreadId.
-    /// \param context
-    ///    The location where the thread's metadata currently lives.
-    /// \param generation
-    ///    Used to differentiate this thread from others that lived at this
-    ///    context in the past and future.
-    ThreadId(ThreadContext* context, uint32_t generation)
-        : context(context), generation(generation) {}
-
-    ThreadId() : context(NULL), generation(0) {}
-
-    /// The equality operator is generally used for comparing against
-    /// Arachne::NullThread.
-    bool operator==(const ThreadId& other) const {
-        return context == other.context && generation == other.generation;
-    }
-
-    /// Negation of the function above.
-    bool operator!=(const ThreadId& other) const { return !(*this == other); }
-
-    bool operator!() const { return *this == ThreadId(); }
-};
 
 void init(int* argcp = NULL, const char** argv = NULL);
 void init_static(const cpu_set_t *cpu_set);
@@ -147,36 +115,6 @@ ThreadId getThreadId();
 void setErrorStream(FILE* ptr);
 void mainThreadInit();
 void mainThreadDestroy();
-
-/**
- * A resource which blocks the current thread until it is available.
- * This resources should not be acquired from non-Arachne threads.
- */
-class SleepLock {
-  public:
-    /** Constructor and destructor for sleepLock. */
-    SleepLock()
-        : blockedThreads(),
-          blockedThreadsLock("blockedthreadslock", false),
-          owner(NULL) {}
-    ~SleepLock() {}
-    void lock();
-    bool try_lock();
-    void unlock();
-    bool owned();
-
-  private:
-    // Ordered collection of threads that are waiting on this lock. Threads
-    // are processed from this list in FIFO order when a notifyOne() is called.
-    std::deque<ThreadId> blockedThreads;
-
-    // A SpinLock to protect the blockedThreads data structure.
-    SpinLock blockedThreadsLock;
-
-    // Used to identify the owning context for this lock. The lock is held iff
-    // owner != NULL.
-    ThreadContext* owner;
-};
 
 /**
  * This class enables one or more threads to block until a condition is true,
