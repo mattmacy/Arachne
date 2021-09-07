@@ -70,6 +70,7 @@ extern FILE* errorStream;
 void dispatch();
 
 extern std::function<void()> initCore;
+extern std::function<void()> deinitCore;
 
 extern std::vector<ThreadContext**> allThreadContexts;
 

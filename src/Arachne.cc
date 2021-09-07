@@ -62,6 +62,8 @@ FILE* errorStream = stderr;
 // lifetime of each kernel thread.
 std::function<void()> initCore = nullptr;
 
+std::function<void()> deinitCore = nullptr;
+
 // The following configuration options can be passed into init.
 
 /**
@@ -274,7 +276,7 @@ uint32_t
 getNextAvailable()
 {
     pthread_mutex_lock(&avail_lock);
-    int next = 0;
+    int next = -1;
     for (int i = 0; i < CPU_SETSIZE; i++) {
         if (CPU_ISSET(i, &avail_cpu_set)) {
             next = i;
@@ -283,7 +285,7 @@ getNextAvailable()
         }
     }
     pthread_mutex_unlock(&avail_lock);
-    assert(next);
+    assert(next >= 0);
     pthread_t curthread = pthread_self();
     cpu_set_t bind_set;
 
@@ -393,6 +395,8 @@ threadMain() {
         PerfStats::releaseStats(std::move(PerfStats::threadStats));
     }
     deinitializeCore(&core);
+    if (deinitCore)
+        deinitCore();
 #ifndef DISABLE_ARBITER
     coreArbiter->unregisterThread();
 #endif
