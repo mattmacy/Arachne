@@ -78,6 +78,7 @@ class SleepLockSX {
     bool try_xlock();
     void xunlock();
     bool owned();
+    uint32_t get_num_waiters();
 
   private:
     // Ordered collection of threads that are waiting on this lock. Threads

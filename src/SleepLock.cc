@@ -190,5 +190,9 @@ SleepLockSX::owned() {
     return (owner != nullptr) || (shared != 0);
 }
 
+uint32_t
+SleepLockSX::get_num_waiters() {
+    return blockedSThreads.size() + blockedXThreads.size();
+}
 
 }
