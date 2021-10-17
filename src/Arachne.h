@@ -109,7 +109,7 @@ void setCorePolicy(CorePolicy* arachneCorePolicy);
 CorePolicy* getCorePolicy();
 
 void block();
-void signal(ThreadId id);
+void schedule(ThreadId id);
 void join(ThreadId id);
 ThreadId getThreadId();
 
@@ -125,12 +125,12 @@ class ConditionVariable {
   public:
     ConditionVariable();
     ~ConditionVariable();
-    void notifyOne();
-    void notifyAll();
+    void signal();
+    void broadcast();
     template <typename LockType>
     void wait(LockType& lock);
     template <typename LockType>
-    void waitFor(LockType& lock, uint64_t ns);
+    bool timed_wait(LockType& lock, uint64_t ns);
 
   private:
     // Ordered collection of threads that are waiting on this condition
@@ -600,8 +600,8 @@ ConditionVariable::wait(LockType& lock) {
  *     absence of a signal.
  */
 template <typename LockType>
-void
-ConditionVariable::waitFor(LockType& lock, uint64_t ns) {
+bool
+ConditionVariable::timed_wait(LockType& lock, uint64_t ns) {
     core.loadedContext->wakeupTimeInCycles =
         Cycles::rdtsc() + Cycles::fromNanoseconds(ns);
     blockedThreads.push_back(
@@ -609,6 +609,7 @@ ConditionVariable::waitFor(LockType& lock, uint64_t ns) {
     lock.unlock();
     dispatch();
     lock.lock();
+    return (Cycles::rdtsc() >= core.loadedContext->wakeupTimeInCycles);
 }
 
 /**

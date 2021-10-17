@@ -53,7 +53,7 @@ SleepLock::unlock() {
         return;
     }
     owner = blockedThreads.front().context;
-    signal(blockedThreads.front());
+    schedule(blockedThreads.front());
     blockedThreads.pop_front();
     blockedThreadsLock.unlock();
 }
@@ -110,7 +110,7 @@ SleepLockSX::xunlock() {
     if (!blockedSThreads.empty()) {
         owner = NULL;
         while (!blockedSThreads.empty()) {
-            signal(blockedSThreads.front());
+            schedule(blockedSThreads.front());
             blockedSThreads.pop_front();
             blockedThreadsLock.unlock();
             shared++;
@@ -124,7 +124,7 @@ SleepLockSX::xunlock() {
         return;
     }
     owner = blockedXThreads.front().context;
-    signal(blockedXThreads.front());
+    schedule(blockedXThreads.front());
     blockedXThreads.pop_front();
     blockedThreadsLock.unlock();
 }
@@ -180,7 +180,7 @@ SleepLockSX::sunlock() {
         return;
     }
     owner = blockedXThreads.front().context;
-    signal(blockedXThreads.front());
+    schedule(blockedXThreads.front());
     blockedXThreads.pop_front();
     blockedThreadsLock.unlock();
 }

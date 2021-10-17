@@ -557,7 +557,7 @@ schedulerMainLoop() {
         *core.highPriorityThreads &= ~(1L << (core.loadedContext->idInCore));
         PerfStats::threadStats->numThreadsFinished++;
 
-        core.loadedContext->joinCV.notifyAll();
+        core.loadedContext->joinCV.broadcast();
     }
 }
 
@@ -826,7 +826,7 @@ compareExchange(volatile uint64_t* target, uint64_t test, uint64_t newValue) {
  *     The id of the thread to signal.
  */
 void
-signal(ThreadId id) {
+schedule(ThreadId id) {
     // Speculatively assume that that the thread being signaled is in the
     // BLOCKED state, and retry the CAS if it is not. This approach avoids
     // first taking a cache miss to read and then performing a CAS in the case
@@ -1313,12 +1313,12 @@ ConditionVariable::~ConditionVariable() {}
  * wait().
  */
 void
-ConditionVariable::notifyOne() {
+ConditionVariable::signal() {
     if (blockedThreads.empty())
         return;
     ThreadId awakenedThread = blockedThreads.front();
     blockedThreads.pop_front();
-    signal(awakenedThread);
+    schedule(awakenedThread);
 }
 
 /**
@@ -1327,9 +1327,9 @@ ConditionVariable::notifyOne() {
  * wait().
  */
 void
-ConditionVariable::notifyAll() {
+ConditionVariable::broadcast() {
     while (!blockedThreads.empty())
-        notifyOne();
+        signal();
 }
 
 // Constructor
@@ -1354,7 +1354,7 @@ void
 Semaphore::notify() {
     std::unique_lock<decltype(countProtector)> lock(countProtector);
     ++count;
-    countWaiter.notifyOne();
+    countWaiter.signal();
 }
 
 /**
