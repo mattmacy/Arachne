@@ -26,6 +26,7 @@
 #include <queue>
 #include <string>
 #include <vector>
+#include "intrusive_list.h"
 
 #include "Common.h"
 #include "CorePolicy.h"
@@ -134,9 +135,9 @@ class ConditionVariable {
 
   private:
     // Ordered collection of threads that are waiting on this condition
-    // variable. Threads are processed from this list in FIFO order when a
-    // notifyOne() is called.
-    std::deque<ThreadId> blockedThreads;
+    // variable. Threads are processed from this list in FIFO order when
+    // signal() is called.
+    intrusive_list<ThreadContext> blockedThreads;
     DISALLOW_COPY_AND_ASSIGN(ConditionVariable);
 };
 
@@ -220,7 +221,7 @@ struct ThreadInvocation : public ThreadInvocationEnabler {
 /**
  * This class holds all the state for managing an Arachne thread.
  */
-struct ThreadContext {
+struct ThreadContext : public intrusive_list_base_hook<> {
     /// Keep a reference to the original memory allocation for the stack used by
     /// this threadContext so that we can release the memory in shutDown.
     void* stack;
@@ -577,8 +578,7 @@ ConditionVariable::wait(LockType& lock) {
 #if TIME_TRACE
     TimeTrace::record("Wait on Core %d", core.id);
 #endif
-    blockedThreads.push_back(
-        ThreadId(core.loadedContext, core.loadedContext->generation));
+    blockedThreads.push_back(*core.loadedContext);
     lock.unlock();
     dispatch();
 #if TIME_TRACE
@@ -602,14 +602,20 @@ ConditionVariable::wait(LockType& lock) {
 template <typename LockType>
 bool
 ConditionVariable::timed_wait(LockType& lock, uint64_t ns) {
-    core.loadedContext->wakeupTimeInCycles =
-        Cycles::rdtsc() + Cycles::fromNanoseconds(ns);
-    blockedThreads.push_back(
-        ThreadId(core.loadedContext, core.loadedContext->generation));
+    if (ns == ~0)
+        core.loadedContext->wakeupTimeInCycles = ns;
+    else
+        core.loadedContext->wakeupTimeInCycles =
+            Cycles::rdtsc() + Cycles::fromNanoseconds(ns);
+    blockedThreads.push_back(*core.loadedContext);
     lock.unlock();
     dispatch();
     lock.lock();
-    return (Cycles::rdtsc() >= core.loadedContext->wakeupTimeInCycles);
+    if (core.loadedContext->is_linked()) {
+        core.loadedContext->unlink();
+        return true;
+    }
+    return false;
 }
 
 /**

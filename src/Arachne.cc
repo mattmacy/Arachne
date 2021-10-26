@@ -1316,9 +1316,9 @@ void
 ConditionVariable::signal() {
     if (blockedThreads.empty())
         return;
-    ThreadId awakenedThread = blockedThreads.front();
+    auto& awakenedThread = blockedThreads.front();
     blockedThreads.pop_front();
-    schedule(awakenedThread);
+    schedule(ThreadId(std::addressof(awakenedThread), awakenedThread.generation));
 }
 
 /**
