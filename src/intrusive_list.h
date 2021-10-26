@@ -15,6 +15,7 @@
 
 
 #include <memory>
+#include <assert.h>
 
 #pragma once
 struct intrusive_list_node
@@ -23,7 +24,8 @@ struct intrusive_list_node
     node_ptr next_;
     node_ptr prev_;
     intrusive_list_node() : next_(nullptr), prev_(nullptr) {}
-        
+    intrusive_list_node(intrusive_list_node&) = delete;
+    intrusive_list_node(intrusive_list_node&&) = delete;
 };
 
 struct default_tag;
@@ -45,12 +47,13 @@ public:
         node_ptr next{this->next_};
         node_ptr prev{this->prev_};
         prev->next_ = next;
-        this->prev_ = prev;
+        next->prev_ = prev;
         this->prev_ = this->next_ = nullptr;
     }
 
     void link_before(node_ptr next_node) {
         node_ptr prev{next_node->prev_};
+        assert(this->next_ == nullptr);
         this->prev_ = prev;
         this->next_ = next_node;
         next_node->prev_ = static_cast<node_ptr>(this);
@@ -59,6 +62,7 @@ public:
 
     void link_after(node_ptr prev_node) {
         node_ptr next{prev_node->next_};
+        assert(this->next_ == nullptr);
         this->prev_ = prev_node;
         this->next_ = next;
         prev_node->next_ = static_cast<node_ptr>(this);
@@ -164,11 +168,13 @@ public:
     }
 
     void pop_front() {
+        assert(node.next_ != &node);
         auto hook_ptr = static_cast<intrusive_list_base_hook<tag> *>(node.next_);
         hook_ptr->unlink();
     } 
 
     void pop_back() {
+        assert(node.prev_ != &node);
         auto hook_ptr = static_cast<intrusive_list_base_hook<tag> *>(node.prev_);
         hook_ptr->unlink();
     }
