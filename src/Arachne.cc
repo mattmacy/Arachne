@@ -142,23 +142,15 @@ std::vector<ThreadContext**> allThreadContexts;
 std::vector<std::atomic<MaskAndCount>*> occupiedAndCount;
 
 /**
- * This is a per-core bitmask that represents which contexts are pinned to the
- * core (such contexts cannot be migrated away from the core).
+ * Global coreId -> Core mapping.
  */
-std::vector<std::atomic<uint64_t>*> pinnedContexts;
+std::vector<Core *> coreMap;
 
 /**
  * Track the addresses of each kernel thread's
  * Dispatch::lastTotalCollectionTime.
  */
 std::vector<uint64_t*> lastTotalCollectionTime;
-
-/**
- * Setting a jth bit in the ith element of this vector indicates that the
- * priority of the thread living at index j on core i is temporarily raised.
- * Values pointed to must be in separate cache lines for high performance.
- */
-std::vector<std::atomic<uint64_t>*> allHighPriorityThreads;
 
 /**
  * An array of semaphores cores can park on to idle themselves.
@@ -327,10 +319,9 @@ threadMain() {
             PerfStats::releaseStats(std::move(PerfStats::threadStats));
             break;
         }
+        coreMap[core.id] = std::addressof(core);
         core.localOccupiedAndCount = occupiedAndCount[core.id];
-        pinnedContexts[core.id] = core.localPinnedContexts;
         core.localThreadContexts = allThreadContexts[core.id];
-        allHighPriorityThreads[core.id] = core.highPriorityThreads;
 
         IdleTimeTracker::lastTotalCollectionTime = 0;
         // Clean up state from the last time this thread ran. This should
@@ -862,7 +853,7 @@ schedule(ThreadId id) {
     // Raise the priority of the newly awakened thread except the UNOCCUPIED.
     if (oldWakeupTime != ThreadContext::UNOCCUPIED &&
         id.context->coreId != static_cast<uint8_t>(~0)) {
-        *allHighPriorityThreads[id.context->coreId] |=
+        *coreMap[id.context->coreId]->highPriorityThreads |=
             (1L << id.context->idInCore);
     }
 }
@@ -919,8 +910,7 @@ waitForTermination() {
 
     allThreadContexts.clear();
     occupiedAndCount.clear();
-    pinnedContexts.clear();
-    allHighPriorityThreads.clear();
+    coreMap.clear();
     PerfUtils::Util::serialize();
 #ifndef DISABLE_ARBITER
     coreArbiter->reset();
@@ -1192,9 +1182,8 @@ init_static(const cpu_set_t *cpu_set)
     lastTotalCollectionTime.resize(numHardwareCores);
     // Create enough data structures to account for every core in the system.
     occupiedAndCount.resize(numHardwareCores);
-    pinnedContexts.resize(numHardwareCores);
-    allHighPriorityThreads.resize(numHardwareCores);
     allThreadContexts.resize(numHardwareCores);
+    coreMap.resize(numHardwareCores);
     for (unsigned int i = 0; i < numHardwareCores; i++) {
 		void *p = alignedAlloc(sizeof(std::atomic<MaskAndCount>));
         memset(p, 0, sizeof(std::atomic<MaskAndCount>));
@@ -1616,7 +1605,7 @@ migrateThreadsFromCore() {
                 // Search for a non-occupied slot and attempt to reserve the
                 // slot
                 index = 0;
-                while (((slotMap.occupied | *pinnedContexts[coreId]) &
+                while (((slotMap.occupied | *coreMap[coreId]->localPinnedContexts) &
                         (1L << index)) &&
                        index < maxThreadsPerCore)
                     index++;
