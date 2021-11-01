@@ -20,8 +20,11 @@ BIN_DIR = bin
 # Depenencies
 PERFUTILS=../PerfUtils
 COREARBITER=../CoreArbiter
-INCLUDE=-I$(PERFUTILS)/include -I$(COREARBITER)/include -I$(SRC_DIR)
-LIBS=$(COREARBITER)/lib/libCoreArbiter.a $(PERFUTILS)/lib/libPerfUtils.a -lpcrecpp -pthread
+LIBURING=../liburing
+INCLUDE=-I$(PERFUTILS)/include -I$(COREARBITER)/include -I$(LIBURING)/src/include \
+	-I$(SRC_DIR)
+LIBS=$(COREARBITER)/lib/libCoreArbiter.a $(PERFUTILS)/lib/libPerfUtils.a \
+	$(LIBURING)/src/liburing.a -lpcrecpp -pthread
 CLIBS=$(LIBS) -lstdc++
 
 # Stuff needed for make check
@@ -31,7 +34,7 @@ CHECK_TARGET=$$(find $(SRC_DIR) $(WRAPPER_DIR) '(' -name '*.h' -or -name '*.cc' 
 endif
 
 # Conversion to fully qualified names
-OBJECT_NAMES := Arachne.o SleepLock.o Logger.o PerfStats.o DefaultCorePolicy.o CoreLoadEstimator.o arachne_wrapper.o
+OBJECT_NAMES := Arachne.o SleepLock.o Logger.o PerfStats.o DefaultCorePolicy.o CoreLoadEstimator.o fiber_syscall.o arachne_wrapper.o
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find $(SRC_DIR) $(WRAPPER_DIR) -name '*.h')

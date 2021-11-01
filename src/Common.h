@@ -19,6 +19,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <atomic>
+#include "utils.h"
+#include "circular_buffer.h"
+#include "fiber_syscall.h"
+#include <liburing.h>
 
 // This file exists to resolve circular dependencies.
 
@@ -51,6 +55,8 @@ struct MaskAndCount;
  * This class holds all the state associated with a particular core in Arachne.
  */
 struct Core {
+    /* Locally accessed fields */
+
     /**
      * True means Arachne has finished migrating threads off this core and it's
      * now safe to call blockUntilCoreAvailable.
@@ -64,11 +70,19 @@ struct Core {
     bool coreDeschedulingScheduled;
 
     /**
-     * This pointer allows fast access to the current kernel thread's
-     * localThreadContexts without computing an offset from the global
-     * allThreadContexts vector on each access.
+     * This variable holds the index into the current kernel thread's
+     * localThreadContexts that it will check first the next time it looks for
+     * a thread to run. It is used to implement round-robin scheduling of
+     * Arachne threads.
      */
-    ThreadContext** localThreadContexts;
+    uint8_t nextCandidateIndex = 0;
+
+    /**
+     * This is the highest-indexed context known to be occupied on a given
+     * core. Additional occupied contexts are immediately above this context
+     * and have no unoccupied contexts between them.
+     */
+    uint8_t highestOccupiedContext;
 
     /**
      * The unique identifier given by the Linux kernel for this core.
@@ -76,11 +90,31 @@ struct Core {
     int id = -1;
 
     /**
+     * A bitmask in which set bits represent contexts that should run with
+     * elevated priority.
+     * Each call to dispatch() will examine this bitmask before searching other
+     * contexts. When reducing the number of cores, this value (if nonzero)
+     * should be cleared, since all non-terminated threads on this core will be
+     * migrated away from this thread.
+     */
+    uint64_t privatePriorityMask;
+
+    /**
+     * This pointer allows fast access to the current kernel thread's
+     * localThreadContexts without computing an offset from the global
+     * allThreadContexts vector on each access.
+     */
+    ThreadContext** localThreadContexts;
+
+    /**
      * This is the context of the thread that a given core is currently
      * executing. If the core is not executing a context, it polls for threads
      * to execute using this context's stack.
      */
     ThreadContext* loadedContext;
+
+
+    /* Externally accessed fields */
 
     /**
      * This points at the occupied bitmask that describes occupancy for this
@@ -102,30 +136,28 @@ struct Core {
      */
     std::atomic<uint64_t>* highPriorityThreads;
 
-    /**
-     * A bitmask in which set bits represent contexts that should run with
-     * elevated priority.
-     * Each call to dispatch() will examine this bitmask before searching other
-     * contexts. When reducing the number of cores, this value (if nonzero)
-     * should be cleared, since all non-terminated threads on this core will be
-     * migrated away from this thread.
+    /*
+     * System call queue for io_uring supported operations.
      */
-    uint64_t privatePriorityMask;
+    struct io_uring sys_io_ring;
 
-    /**
-     * This variable holds the index into the current kernel thread's
-     * localThreadContexts that it will check first the next time it looks for
-     * a thread to run. It is used to implement round-robin scheduling of
-     * Arachne threads.
-     */
-    uint8_t nextCandidateIndex = 0;
 
-    /**
-     * This is the highest-indexed context known to be occupied on a given
-     * core. Additional occupied contexts are immediately above this context
-     * and have no unoccupied contexts between them.
+    intrusive_list<syscall_wait_request> pending_requests;
+
+    /*
+     * For future use.
      */
-    uint8_t highestOccupiedContext;
+
+    /*
+     * Used to communicate with poll thread the number of items
+     * in sys_io_ring.
+     */
+    std::atomic<uint32_t> sys_io_ring_backlog;
+
+    /*
+     * Circular ring buffer of system call operations.
+     */
+    circular_buffer<syscall_request, 64> sys_proxy_ring;
 };
 
 void* alignedAlloc(size_t size, size_t alignment = CACHE_LINE_SIZE);

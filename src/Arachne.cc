@@ -159,6 +159,24 @@ std::vector<uint64_t*> lastTotalCollectionTime;
 std::vector<::Semaphore*> coreIdleSemaphores;
 
 /**
+ * Used to determine if core 0 has initialized its ring yet
+ * and thus other cores can attach their rings to the same
+ * work queue.
+ */
+std::atomic<bool> ring_zero_inited(false);
+
+/**
+ * If IORING_SETUP_SQPOLL is in use, the number of milliseconds
+ * for the polling thread to run before going to sleep.
+ */
+static int ring_idle_timeout = 10;
+
+/**
+ * The queue depth of the per-cpu io_uring submission queue.
+ */
+static int pcpu_ring_entries = 64;
+
+/**
  * All core-specific state that is not associated with other classes.
  */
 thread_local Core core;
@@ -305,6 +323,28 @@ threadMain() {
 #else
         core.id = getNextAvailable();
 #endif
+        Core *coreptr = std::addressof(core);
+        coreMap[core.id] = coreptr;
+
+        /*
+         * IORING_SETUP_ATTACH_WQ: >= 5.6
+         * IORING_SETUP_SQPOLL: >= 5.11 (otherwise requires fd registration)
+         */
+        struct io_uring_params p;
+        memset(&p, 0, sizeof(p));
+        p.flags = IORING_SETUP_SQPOLL;
+        p.sq_thread_idle = ring_idle_timeout;
+        if (core.id != 0) {
+            while (!ring_zero_inited.load(std::memory_order_acquire)) {
+                sched_yield();
+            }
+            p.wq_fd = coreMap[0]->sys_io_ring.ring_fd;
+            p.flags |= IORING_SETUP_ATTACH_WQ;
+        }
+        io_uring_queue_init_params(pcpu_ring_entries, &coreptr->sys_io_ring, &p);
+        ring_zero_inited.store(true, std::memory_order_release);
+
+
         // Associate this thread's PerfStats pointer with the proper value for
         // the core this thread is executing on.
         PerfStats::threadStats = PerfStats::getStats(core.id);
@@ -319,7 +359,6 @@ threadMain() {
             PerfStats::releaseStats(std::move(PerfStats::threadStats));
             break;
         }
-        coreMap[core.id] = std::addressof(core);
         core.localOccupiedAndCount = occupiedAndCount[core.id];
         core.localThreadContexts = allThreadContexts[core.id];
 
@@ -612,6 +651,14 @@ getThreadId() {
                : Arachne::NullThread;
 }
 
+void
+checkSysRing()
+{
+    if (core.pending_requests.empty())
+        return;
+    check_for_completions(std::addressof(core.sys_io_ring));
+}
+
 /**
  * Deschedule the current thread until its wakeup time is reached (which may
  * have already happened) and find another thread to run. All direct and
@@ -642,6 +689,7 @@ dispatch() {
     checkForArbiterRequest();
 
     uint64_t dispatchIterationStartCycles = Cycles::rdtsc();
+    checkSysRing();
 
     // Check for high priority threads.
     if (!core.privatePriorityMask) {
