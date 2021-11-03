@@ -118,6 +118,8 @@ namespace Arachne {
         int result;
 
         int fd;
+        uint32_t refcount_local;
+        uint32_t *refcount;
         uint64_t offset;
         void * ext_arg;
         struct iovec iov[1];
@@ -129,7 +131,9 @@ namespace Arachne {
             result(INCOMPLETE_REQUEST),
             offset(0),
             ext_arg(nullptr)
-            {}
+            {
+                this->refcount = &this->refcount_local;
+            }
     };
 
 
@@ -139,8 +143,11 @@ namespace Arachne {
      * Functions supported by io_uring on 5.4
      */
     ssize_t preadv(int fd, const struct iovec *iov, int iovcnt, uint64_t off, uint64_t timeout_ms);
+    int preadvv(int iocnt, int *fd, const struct iovec **iov, int *iovcnt, uint64_t *off, int *rcs, uint64_t timeout_ms);
     ssize_t pwritev(int fd, const struct iovec *iov, int iovcnt, uint64_t off, uint64_t timeout_ms);
+    int pwritevv(int iocnt, int *fds, const struct iovec **iovs, int *iovcnts, uint64_t *offs, int *rcs, uint64_t timeout_ms);
     int fsync(int fd, uint64_t timeout_ms);
+    int fsyncv(int iocnt, int *fds, int *rcs, uint64_t timeout_ms);
     int poll(int fd, uint64_t timeout_ms);
 
 
