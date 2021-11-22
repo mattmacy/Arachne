@@ -143,13 +143,30 @@ namespace Arachne {
      * Functions supported by io_uring on 5.4
      */
     ssize_t preadv(int fd, const struct iovec *iov, int iovcnt, uint64_t off, uint64_t timeout_ms);
-    int preadvv(int iocnt, int *fd, const struct iovec **iov, int *iovcnt, uint64_t *off, int *rcs, uint64_t timeout_ms);
-    ssize_t pwritev(int fd, const struct iovec *iov, int iovcnt, uint64_t off, uint64_t timeout_ms);
-    int pwritevv(int iocnt, int *fds, const struct iovec **iovs, int *iovcnts, uint64_t *offs, int *rcs, uint64_t timeout_ms);
+    int preadvv(int iocnt, int *fd, struct iovec **iov, int *iovcnt, uint64_t *off, int *rcs, uint64_t timeout_ms);
+    ssize_t pwritev(int fd, struct iovec *iov, int iovcnt, uint64_t off, uint64_t timeout_ms);
+    int pwritevv(int iocnt, int *fds, struct iovec **iovs, int *iovcnts, uint64_t *offs, int *rcs, uint64_t timeout_ms);
     int fsync(int fd, uint64_t timeout_ms);
     int fsyncv(int iocnt, int *fds, int *rcs, uint64_t timeout_ms);
     int poll(int fd, uint64_t timeout_ms);
 
+
+    /*
+     * supported in 5.6
+     */
+    ssize_t send(int sockfd, const void *buf, size_t len, int flags, uint64_t timeout_ms);
+
+
+    ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags, uint64_t timeout_ms);
+
+
+    /*
+     * supported in 5.6
+     */
+    ssize_t recv(int sockfd, void *buf, size_t len, int flags, uint64_t timeout_ms);
+
+
+    ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags, uint64_t timeout_ms);
 
     /*
      * supported in 5.6 -- emulated with poll for earlier
@@ -159,7 +176,7 @@ namespace Arachne {
     /*
      * supported in 5.6 -- emulated with poll for earlier
      */
-    int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen, uint64_t timeout_ms);
 
     /*
      * supported in 5.6 -- dispatched to thread pool prior
