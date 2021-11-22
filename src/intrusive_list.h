@@ -18,6 +18,8 @@
 #include <assert.h>
 
 #pragma once
+namespace Arachne {
+
 struct intrusive_list_node
 {
     using node_ptr = intrusive_list_node *;
@@ -188,3 +190,4 @@ public:
     }
     
 };
+} // namespace Arachne
