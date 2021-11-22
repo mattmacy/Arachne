@@ -90,7 +90,7 @@ void init_static(const cpu_set_t *cpu_set);
 void shutDown();
 void waitForTermination();
 void yield();
-void sleep(uint64_t ns);
+void nanosleep(uint64_t ns);
 void sleepForCycles(uint64_t cycles);
 
 void idleCore(int coreId);

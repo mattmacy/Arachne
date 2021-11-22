@@ -151,7 +151,7 @@ DefaultCorePolicy::getExclusiveCore() {
 void
 DefaultCorePolicy::adjustCores() {
     while (true) {
-        Arachne::sleep(measurementPeriod);
+        Arachne::nanosleep(measurementPeriod);
         if (!coreAdjustmentShouldRun.load()) {
             loadEstimator.clearHistory();
             continue;

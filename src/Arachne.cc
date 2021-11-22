@@ -621,7 +621,7 @@ yield() {
  * impacted by other threads' activities such as blocking and yielding.
  */
 void
-sleep(uint64_t ns) {
+nanosleep(uint64_t ns) {
     sleepForCycles(Cycles::fromNanoseconds(ns));
 }
 
@@ -689,7 +689,6 @@ dispatch() {
     checkForArbiterRequest();
 
     uint64_t dispatchIterationStartCycles = Cycles::rdtsc();
-    checkSysRing();
 
     // Check for high priority threads.
     if (!core.privatePriorityMask) {
@@ -705,6 +704,8 @@ dispatch() {
     // Run any high priority threads before searching the entire set of
     // contexts for runnable threads.
     if (core.privatePriorityMask) {
+        checkSysRing();
+
         // This position is one-indexed with zero meaning that no bits were
         // set.
         int firstSetBit = ffsll(core.privatePriorityMask) - 1;
@@ -751,6 +752,8 @@ dispatch() {
     uint8_t currentIndex = core.nextCandidateIndex;
 
     for (;; currentIndex++) {
+        checkSysRing();
+
         // Ensure that we do not go out of bounds.
         if (currentIndex == maxThreadsPerCore) {
             currentIndex = 0;
