@@ -166,6 +166,11 @@ std::vector<::Semaphore*> coreIdleSemaphores;
 std::atomic<bool> ring_zero_inited(false);
 
 /**
+ * Used to elect the leader for allocating the io_uring workqueue.
+ */
+static int first_core_set = 0;
+
+/**
  * If IORING_SETUP_SQPOLL is in use, the number of milliseconds
  * for the polling thread to run before going to sleep.
  */
@@ -258,7 +263,7 @@ initializeCore(Core* core) {
     // All cores initially poll for work on context 0's stack.
     core->localPinnedContexts->store(1U);
 
-	void *p = alignedAlloc(sizeof(std::atomic<uint64_t>));
+    void *p = alignedAlloc(sizeof(std::atomic<uint64_t>));
     memset(p, 0, sizeof(std::atomic<uint64_t>));
     core->highPriorityThreads = reinterpret_cast<std::atomic<uint64_t>*>(p);
 
@@ -270,6 +275,7 @@ initializeCore(Core* core) {
         new (contexts[k]) ThreadContext(k);
     }
     core->localThreadContexts = contexts;
+    pthread_setname_np(pthread_self(), "arachne_thread");
 }
 
 /**
@@ -334,11 +340,11 @@ threadMain() {
         memset(&p, 0, sizeof(p));
         p.flags = IORING_SETUP_SQPOLL;
         p.sq_thread_idle = ring_idle_timeout;
-        if (core.id != 0) {
+        if (core.id != first_core_set) {
             while (!ring_zero_inited.load(std::memory_order_acquire)) {
                 sched_yield();
             }
-            p.wq_fd = coreMap[0]->sys_io_ring.ring_fd;
+            p.wq_fd = coreMap[first_core_set]->sys_io_ring.ring_fd;
             p.flags |= IORING_SETUP_ATTACH_WQ;
         }
         io_uring_queue_init_params(pcpu_ring_entries, &coreptr->sys_io_ring, &p);
@@ -968,6 +974,7 @@ waitForTermination() {
 #endif
     delete corePolicy;
     corePolicy = NULL;
+    ring_zero_inited.store(false, std::memory_order_release);
     initialized = false;
 }
 
@@ -1224,6 +1231,13 @@ init_static(const cpu_set_t *cpu_set)
     pthread_mutex_init(&avail_lock, NULL);
     CPU_ZERO(&avail_cpu_set);
     CPU_OR(&avail_cpu_set, &avail_cpu_set, cpu_set);
+    for (int i = 0; i < CPU_SETSIZE; i++) {
+        if (CPU_ISSET(i, cpu_set)) {
+            first_core_set = i;
+            break;
+        }
+    }
+
 #endif
 
     if (corePolicy == NULL) {
