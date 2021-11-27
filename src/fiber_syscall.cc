@@ -14,7 +14,10 @@ uring_syscall(int fd, void *argptr, uint64_t argint,
     int iovcnt = 0;
     int rc;
 
-    static_assert(opcode == IORING_OP_WRITEV || opcode == IORING_OP_READV || opcode == IORING_OP_FSYNC);
+    static_assert(opcode == IORING_OP_WRITEV || opcode == IORING_OP_READV ||
+                  opcode == IORING_OP_FSYNC || opcode == IORING_OP_SEND ||
+                  opcode == IORING_OP_SENDMSG || opcode == IORING_OP_ACCEPT ||
+                  opcode == IORING_OP_CONNECT || opcode == IORING_OP_CLOSE);
     switch (opcode) {
         case IORING_OP_WRITEV:
         case IORING_OP_READV:
@@ -44,9 +47,32 @@ uring_syscall(int fd, void *argptr, uint64_t argint,
         memcpy(iovp, iovin, sizeof(*iovin)*iovcnt);
     }
     uint64_t min_delay = 1;
-    uint64_t wakeup_time = Cycles::rdtsc() + Cycles::fromMilliseconds(std::max(timeout_ms, min_delay));
+    uint64_t wakeup_time = -1ULL;
+    if (timeout_ms != -1ULL) {
+        wakeup_time = Cycles::rdtsc() + Cycles::fromMilliseconds(std::max(timeout_ms, min_delay));
+    }
     core.loadedContext->wakeupTimeInCycles = wakeup_time;
-    io_uring_prep_rw(opcode, sqe, fd, iovp, iovcnt, off);
+     switch (opcode) {
+        case IORING_OP_WRITEV:
+        case IORING_OP_READV:
+            io_uring_prep_rw(opcode, sqe, fd, iovp, iovcnt, off);
+            break;
+         case IORING_OP_SEND:
+             io_uring_prep_send(sqe, fd, argptr, argint, flags);
+            break;
+         case IORING_OP_SENDMSG:
+             io_uring_prep_sendmsg(sqe, fd, (const struct msghdr *)argptr, flags);
+             break;
+         case IORING_OP_ACCEPT:
+             io_uring_prep_accept(sqe, fd, (struct sockaddr *)argptr, (socklen_t *) argint, flags);
+             break;
+         case IORING_OP_CONNECT:
+             io_uring_prep_connect(sqe, fd, (struct sockaddr *)argptr, argint);
+             break;
+         case IORING_OP_CLOSE:
+             io_uring_prep_close(sqe, fd);
+             break;
+     }
     io_uring_sqe_set_data(sqe, request);
     io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
     core.pending_requests.push_back(*request);
@@ -117,7 +143,10 @@ uring_syscallv(int opcount, int *fds, struct iovec **iovs, int *iovcnts, uint64_
         io_uring_submit(std::addressof(core.sys_io_ring));
     }
     uint64_t min_delay = 1;
-    uint64_t wakeup_time = Cycles::rdtsc() + Cycles::fromMilliseconds(std::max(timeout_ms, min_delay));
+    uint64_t wakeup_time = -1ULL;
+    if (timeout_ms != -1ULL) {
+        wakeup_time = Cycles::rdtsc() + Cycles::fromMilliseconds(std::max(timeout_ms, min_delay));
+    }
     core.loadedContext->wakeupTimeInCycles = wakeup_time;
 
     dispatch();
@@ -150,9 +179,9 @@ uring_syscallv(int opcount, int *fds, struct iovec **iovs, int *iovcnts, uint64_
 }
 
 ssize_t
-preadv(int fd, struct iovec *iov, int iovcnt, uint64_t off, uint64_t timeout_ms)
+preadv(int fd, const struct iovec *iov, int iovcnt, uint64_t off, uint64_t timeout_ms)
 {
-    return uring_syscall<IORING_OP_READV>(fd, iov, iovcnt, off, /* flags */ 0, timeout_ms);
+    return uring_syscall<IORING_OP_READV>(fd, (void *)(uintptr_t)iov, iovcnt, off, /* flags */ 0, timeout_ms);
 }
 
 int
@@ -183,6 +212,36 @@ int
 fsyncv(int iocnt, int *fds, int *rcs, uint64_t timeout_ms)
 {
     return uring_syscallv<IORING_OP_FSYNC>(iocnt, fds, nullptr, nullptr, nullptr, rcs, timeout_ms);
+}
+
+ssize_t
+send(int sockfd, const void *buf, size_t len, int flags, uint64_t timeout_ms)
+{
+    return uring_syscall<IORING_OP_SEND>(sockfd, (void *)(uintptr_t)buf, len, /* off */0, flags, timeout_ms);
+}
+
+ssize_t
+sendmsg(int sockfd, const struct msghdr *msg, int flags, uint64_t timeout_ms)
+{
+    return uring_syscall<IORING_OP_SENDMSG>(sockfd, (void *)(uintptr_t)msg, /* len */ 0, /* off */ 0, flags, timeout_ms);
+}
+
+int
+accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+    return uring_syscall<IORING_OP_ACCEPT>(sockfd, addr, (uint64_t) addrlen, /* off */ 0, 0, -1);
+}
+
+int
+connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen, uint64_t timeout_ms)
+{
+    return uring_syscall<IORING_OP_CONNECT>(sockfd, (void *)(uintptr_t)addr, addrlen, /* off */ 0, /* flags */ 0, timeout_ms);
+}
+
+int
+close(int fd)
+{
+    return uring_syscall<IORING_OP_CLOSE>(fd, nullptr, 0, /* off */ 0, /* flags */ 0, -1);
 }
 
 void
