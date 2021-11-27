@@ -46,16 +46,14 @@ SleepLock::try_lock() {
 /** Release resource. */
 void
 SleepLock::unlock() {
-    blockedThreadsLock.lock();
+    std::lock_guard<SpinLock> guard(blockedThreadsLock);
     if (blockedThreads.empty()) {
         owner = NULL;
-        blockedThreadsLock.unlock();
         return;
     }
     owner = blockedThreads.front().context;
     schedule(blockedThreads.front());
     blockedThreads.pop_front();
-    blockedThreadsLock.unlock();
 }
 
 bool
@@ -69,6 +67,7 @@ SleepLock::owned() {
 void
 SleepLockSX::xlock() {
     std::unique_lock<SpinLock> guard(blockedThreadsLock);
+
     if (owner == NULL && shared == 0) {
         owner = core.loadedContext;
         return;
@@ -96,6 +95,7 @@ SleepLockSX::xlock() {
 bool
 SleepLockSX::try_xlock() {
     std::lock_guard<SpinLock> guard(blockedThreadsLock);
+
     if (owner == NULL && shared == 0) {
         owner = core.loadedContext;
         return true;
@@ -106,27 +106,22 @@ SleepLockSX::try_xlock() {
 /** Release resource. */
 void
 SleepLockSX::xunlock() {
-    blockedThreadsLock.lock();
+    std::lock_guard<SpinLock> guard(blockedThreadsLock);
     if (!blockedSThreads.empty()) {
         owner = NULL;
         while (!blockedSThreads.empty()) {
             schedule(blockedSThreads.front());
             blockedSThreads.pop_front();
-            blockedThreadsLock.unlock();
-            shared++;
         }
-        blockedThreadsLock.unlock();
         return;
     }
     if (blockedXThreads.empty()) {
         owner = nullptr;
-        blockedThreadsLock.unlock();
         return;
     }
     owner = blockedXThreads.front().context;
     schedule(blockedXThreads.front());
     blockedXThreads.pop_front();
-    blockedThreadsLock.unlock();
 }
 
 void
@@ -173,16 +168,15 @@ SleepLockSX::try_slock() {
 /** Release resource. */
 void
 SleepLockSX::sunlock() {
-    blockedThreadsLock.lock();
+    std::lock_guard<SpinLock> guard(blockedThreadsLock);
+    assert(shared > 0);
     shared--;
     if (shared || blockedXThreads.empty()) {
-        blockedThreadsLock.unlock();
         return;
     }
     owner = blockedXThreads.front().context;
     schedule(blockedXThreads.front());
     blockedXThreads.pop_front();
-    blockedThreadsLock.unlock();
 }
 
 bool

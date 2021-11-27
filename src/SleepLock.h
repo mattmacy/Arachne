@@ -67,8 +67,9 @@ class SleepLockSX {
     /** Constructor and destructor for sleepLock. */
     SleepLockSX()
         : blockedSThreads(),
-	      blockedXThreads(),
-	      blockedThreadsLock("blockedthreadslock", false),
+          blockedXThreads(),
+          shared(0),
+          blockedThreadsLock("blockedthreadslock", false),
           owner(NULL) {}
     ~SleepLockSX() {}
     void slock();
@@ -89,7 +90,7 @@ class SleepLockSX {
     // are processed from this list in FIFO order when a notifyOne() is called.
     std::deque<ThreadId> blockedXThreads;
 
-    volatile uint16_t shared;
+    volatile int16_t shared;
 
     // A SpinLock to protect the blockedThreads data structure.
     SpinLock blockedThreadsLock;
