@@ -126,6 +126,9 @@ class ConditionVariable {
     void wait(LockType& lock);
     template <typename LockType>
     bool timed_wait(LockType& lock, uint64_t ns);
+    bool waiters() {
+        return !blockedThreads.empty();
+    }
 
   private:
     // Ordered collection of threads that are waiting on this condition
