@@ -34,7 +34,8 @@ CHECK_TARGET=$$(find $(SRC_DIR) $(WRAPPER_DIR) '(' -name '*.h' -or -name '*.cc' 
 endif
 
 # Conversion to fully qualified names
-OBJECT_NAMES := Arachne.o SleepLock.o Logger.o PerfStats.o DefaultCorePolicy.o CoreLoadEstimator.o fiber_syscall.o arachne_wrapper.o
+OBJECT_NAMES := Arachne.o SleepLock.o Logger.o PerfStats.o DefaultCorePolicy.o \
+	CoreLoadEstimator.o fiber_syscall.o swapcontext.o arachne_wrapper.o
 
 OBJECTS = $(patsubst %,$(OBJECT_DIR)/%,$(OBJECT_NAMES))
 HEADERS= $(shell find $(SRC_DIR) $(WRAPPER_DIR) -name '*.h')
@@ -54,6 +55,13 @@ $(OBJECT_DIR)/libArachne.a: $(OBJECTS)
 	ar rcs $@ $^
 
 -include $(DEP)
+
+
+$(OBJECT_DIR)/%.d: $(SRC_DIR)/%.S | $(OBJECT_DIR)
+	$(CC) $(INCLUDE) $(CFLAGS) $< -MM -MT $(@:.d=.o) > $@
+
+$(OBJECT_DIR)/%.o: $(SRC_DIR)/%.S $(HEADERS) | $(OBJECT_DIR)
+	$(CC) $(INCLUDE) $(CFLAGS) -c $< -o $@
 
 $(OBJECT_DIR)/%.d: $(WRAPPER_DIR)/%.c | $(OBJECT_DIR)
 	$(CC) $(INCLUDE) $(CFLAGS) $< -MM -MT $(@:.d=.o) > $@

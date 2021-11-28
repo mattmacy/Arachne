@@ -19,7 +19,7 @@
 
 namespace Arachne {
 
-struct ThreadContext;
+class ThreadContext;
 
 /**
  * This structure is used to identify an Arachne thread to methods of the

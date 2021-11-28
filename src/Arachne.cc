@@ -409,7 +409,7 @@ threadMain() {
         // Transfers control to the Arachne dispatcher.
         // This context has been pre-initialized by init so it will "return"
         // to the schedulerMainLoop.
-        swapcontext(&core.loadedContext->sp, &kernelThreadStacks[core.id]);
+        arachne_swapcontext(&core.loadedContext->sp, &kernelThreadStacks[core.id]);
         numActiveCores--;
         if (shutdown) {
             // Avoid leaking PerfStats across shutdowns.
@@ -439,48 +439,6 @@ threadMain() {
 }
 
 /**
- * Save the current register values onto one stack and load fresh register
- * values from another stack.
- * This method does not return to its caller immediately. It returns to the
- * caller when another thread on the same kernel thread invokes this method
- * with the current value of target as the saved parameter.
- *
- * \param saved
- *     Address of the stack location to load register values from.
- * \param target
- *     Address of the stack location to save register values to.
- */
-void __attribute__((noinline)) swapcontext(void** saved, void** target) {
-    // This code depends on knowledge of the compiler's calling convention: rdi
-    // and rsi are the first two arguments.
-    // Alternative approaches tend to run into conflicts with compiler register
-    // use.
-
-    // Save the registers that the compiler expects to persist across method
-    // calls and store the stack pointer's location after saving these
-    // registers.
-    // NB: The space used by the pushed and
-    // popped registers must equal the value of SPACE_FOR_SAVED_REGISTERS, which
-    // should be updated atomically with this assembly.
-    asm("pushq %r12\n\t"
-        "pushq %r13\n\t"
-        "pushq %r14\n\t"
-        "pushq %r15\n\t"
-        "pushq %rbx\n\t"
-        "pushq %rbp\n\t"
-        "movq %rsp, (%rsi)");
-
-    // Load the stack pointer and restore the registers
-    asm("movq (%rdi), %rsp\n\t"
-        "popq %rbp\n\t"
-        "popq %rbx\n\t"
-        "popq %r15\n\t"
-        "popq %r14\n\t"
-        "popq %r13\n\t"
-        "popq %r12");
-}
-
-/**
  * This is the top level method executed by each thread context. It is never
  * directly invoked. Instead, the thread's context is set up to "return" to
  * this method when we context switch to it the first time.
@@ -503,7 +461,7 @@ schedulerMainLoop() {
             // live on the same core, and will use a different set of user
             // contexts.
             core.coreReadyForReturnToArbiter = false;
-            swapcontext(&kernelThreadStacks[core.id], &core.loadedContext->sp);
+            arachne_swapcontext(&kernelThreadStacks[core.id], &core.loadedContext->sp);
         }
         // No thread to execute yet. This call will not return until we have
         // been assigned a new Arachne thread.
@@ -671,7 +629,7 @@ checkSysRing()
  * indirect callers of this function must ensure that spurious wakeups are
  * safe.
  */
-void
+void __attribute__((noinline))
 dispatch() {
     NestedDispatchDetector detector;
     IdleTimeTracker idleTimeTracker;
@@ -746,7 +704,7 @@ dispatch() {
             // dispatchStartCycles (used for computing idle cycles) but not
             // lastTotalCollectionTime (used for computing total cycles).
             idleTimeTracker.updatePerfStats();
-            swapcontext(&core.loadedContext->sp, saved);
+            arachne_swapcontext(&core.loadedContext->sp, saved);
             originalContext->wakeupTimeInCycles = ThreadContext::BLOCKED;
             IdleTimeTracker::numThreadsRan++;
             Arachne::core.highestOccupiedContext = std::max(
@@ -790,7 +748,7 @@ dispatch() {
 
             // Check for termination
             if (shutdown) {
-                swapcontext(&kernelThreadStacks[core.id],
+                arachne_swapcontext(&kernelThreadStacks[core.id],
                             &core.loadedContext->sp);
             }
 
@@ -824,7 +782,7 @@ dispatch() {
             // dispatchStartCycles (used for computing idle cycles) but not
             // lastTotalCollectionTime (used for computing total cycles).
             idleTimeTracker.updatePerfStats();
-            swapcontext(&core.loadedContext->sp, saved);
+            arachne_swapcontext(&core.loadedContext->sp, saved);
             // After the old context is swapped out above, this line executes
             // in the new context.
             originalContext->wakeupTimeInCycles = ThreadContext::BLOCKED;

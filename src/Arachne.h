@@ -36,6 +36,10 @@
 #include "PerfUtils/Cycles.h"
 #include "PerfUtils/Util.h"
 
+extern "C" {
+void arachne_swapcontext(void** saved, void** target);
+}
+
 /**
  * Arachne is a user-level, cooperative thread management system written in
  * C++, designed to improve core utlization and maximize throughput in server
@@ -218,7 +222,8 @@ struct ThreadInvocation : public ThreadInvocationEnabler {
 /**
  * This class holds all the state for managing an Arachne thread.
  */
-struct ThreadContext : public intrusive_list_base_hook<> {
+class ThreadContext : public intrusive_list_base_hook<> {
+  public:
     /// Keep a reference to the original memory allocation for the stack used by
     /// this threadContext so that we can release the memory in shutDown.
     void* stack;
@@ -328,7 +333,6 @@ const uint64_t STACK_CANARY = 0xDEADBAAD;
 const uint64_t COMPLETION_WAIT_TIME = 100000;
 
 void schedulerMainLoop();
-void swapcontext(void** saved, void** target);
 void threadMain();
 
 /// This structure tracks the live threads on a single core.
