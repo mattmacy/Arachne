@@ -10,27 +10,23 @@ def is_arachne_thread(coreId, maskAndCountPointer):
 
 def thread_to_context(tid):
   maxFibers = gdb.parse_and_eval("Arachne::maxThreadsPerCore")
-  if tid > 256*maxFibers:
-    return None
   coreThreadId = tid % maxFibers
-  threads = gdb.inferiors()[0].threads()
-  curthread = gdb.selected_thread()
-  context = None
-  for thread in threads:
-    thread.switch()
-    coreId = gdb.parse_and_eval("Arachne::core.id")
-    maskAndCountPointer = gdb.parse_and_eval("Arachne::core.localOccupiedAndCount")
-    if not is_arachne_thread(coreId, maskAndCountPointer):
-      continue
-    if tid < coreId*maxFibers or tid >= (coreId+1)*maxFibers:
-      continue
-    bitmask = maskAndCountPointer.dereference()['_M_i']['occupied']
-    if not ((bitmask >> coreThreadId) & 1):
-      break
-    context = gdb.parse_and_eval("Arachne::core.localThreadContexts[{0}]".format(coreThreadId))
-    break
-  curthread.switch()
-  return context
+  coreId = tid // int(maxFibers)
+  coreMapId = gdb.parse_and_eval(f"Arachne::coreMap._M_impl._M_start+{coreId}")
+  coreMapEnd = gdb.parse_and_eval(f"Arachne::coreMap._M_impl._M_finish")
+  if coreMapId > coreMapEnd:
+    print(f"tid: {tid} -> coreId: {coreId} is out of range")
+    return None, None
+  corePtr = coreMapId.dereference()
+  maskAndCountPointer = corePtr.dereference()['localOccupiedAndCount']
+  runningContext = corePtr.dereference()['loadedContext']
+  if maskAndCountPointer == 0:
+    return None, None
+  bitmask = maskAndCountPointer.dereference()['_M_i']['occupied']
+  if not ((bitmask >> coreThreadId) & 1):
+    return None, None
+  coreThreadContextId= gdb.parse_and_eval(f"(Arachne::coreMap._M_impl._M_start+{coreId}).localThreadContexts[{coreThreadId}]")
+  return coreThreadContextId, runningContext
 
 class BackTraceArachneCommand (gdb.Command):
   "Backtrace command for user threads in Arachne threading library."
@@ -41,7 +37,7 @@ class BackTraceArachneCommand (gdb.Command):
                          gdb.COMPLETE_SYMBOL, True)
     gdb.execute("alias -a bta = backtrace-arachne", True)
 
-  def inner_bt(self, from_tty, blocked=True):
+  def inner_bt(self, from_tty):
     try:
       frame = gdb.newest_frame()
       idx = 0
@@ -63,6 +59,39 @@ class BackTraceArachneCommand (gdb.Command):
     except:
       pass
 
+  def backtrace_all(self, from_tty):
+    maxFibers = gdb.parse_and_eval("Arachne::maxThreadsPerCore")
+    threads = gdb.inferiors()[0].threads()
+    curthread = gdb.selected_thread()
+    for thread in threads:
+      thread.switch()
+      coreId = gdb.parse_and_eval("Arachne::core.id")
+      maskAndCountPointer = gdb.parse_and_eval("Arachne::core.localOccupiedAndCount")
+      if not is_arachne_thread(coreId, maskAndCountPointer):
+        continue
+      self.backtrace_local(from_tty)
+    curthread.switch()
+
+  def backtrace_local(self, from_tty):
+    maxFibers = gdb.parse_and_eval("Arachne::maxThreadsPerCore")
+    # Backtrace all threadcontexts that are occupied in the current core
+    coreId = gdb.parse_and_eval("Arachne::core.id")
+    maskAndCountPointer = gdb.parse_and_eval("Arachne::core.localOccupiedAndCount")
+    if not is_arachne_thread(coreId, maskAndCountPointer):
+      print("Current core is not an Arachne core!")
+      return
+    bitmask = maskAndCountPointer.dereference()['_M_i']['occupied']
+    # Perform a backtrace on all the occupied bits.
+    for i in range(maxFibers):
+      if (bitmask >> i) & 1:
+        threadContext = gdb.parse_and_eval("Arachne::core.localThreadContexts[{0}]".format(i))
+        tid = coreId*maxFibers + i
+        print("Arachne Thread #{0} [{1}]:{2}: {3}".format(tid, coreId, i, threadContext))
+        try:
+          self.backtrace(threadContext, from_tty)
+        except:
+          pass
+
   def backtrace(self, threadContext, from_tty):
     # Check if we are backtracing the current context
     loadedContext = gdb.parse_and_eval("Arachne::core.loadedContext")
@@ -70,7 +99,7 @@ class BackTraceArachneCommand (gdb.Command):
       threadContext = gdb.parse_and_eval(threadContext)
     if int(loadedContext) == int(threadContext):
       #gdb.execute("backtrace", from_tty)
-      self.inner_bt(from_tty, False)
+      self.inner_bt(from_tty)
       return
 
     SP = gdb.parse_and_eval("$sp")
@@ -89,31 +118,30 @@ class BackTraceArachneCommand (gdb.Command):
     arg = arg.strip()
     maxFibers = gdb.parse_and_eval("Arachne::maxThreadsPerCore")
     if arg == "":
-        # Backtrace all threadcontexts that are occupied in the current core
-        coreId = gdb.parse_and_eval("Arachne::core.id")
-        maskAndCountPointer = gdb.parse_and_eval("Arachne::core.localOccupiedAndCount")
-        if not is_arachne_thread(coreId, maskAndCountPointer):
-          print("Current core is not an Arachne core!")
-          return
-        bitmask = maskAndCountPointer.dereference()['_M_i']['occupied']
-        # Perform a backtrace on all the occupied bits.
-        for i in range(maxFibers):
-           if (bitmask >> i) & 1:
-               threadContext = gdb.parse_and_eval("Arachne::core.localThreadContexts[{0}]".format(i))
-               tid = coreId*maxFibers + i
-               print("Arachne Thread #{0} [{1}]:{2}: {3}".format(tid, coreId, i, threadContext))
-               try:
-                   self.backtrace(threadContext, from_tty)
-               except:
-                   pass
-
-        return
+      self.backtrace_local(from_tty)
+      return
+    if arg == "all":
+      self.backtrace_all(from_tty)
+      return
     # Check if we were passed a fiber id instead
     if arg.isnumeric() and int(arg) < 256*maxFibers:
-      context = thread_to_context(int(arg))
-      if context:
-        self.backtrace(context, from_tty)
+      context, runningContext = thread_to_context(int(arg))
+      if not context:
+        print(f"no fiber found for {arg}")
         return
+      loadedContext = gdb.parse_and_eval("Arachne::core.loadedContext")
+      curthread = None
+      if context == runningContext and loadedContext != runningContext:
+        curthread = gdb.selected_thread()
+        threads = gdb.inferiors()[0].threads()
+        for thread in threads:
+          thread.switch()
+          loadedContext = gdb.parse_and_eval("Arachne::core.loadedContext")
+          if loadedContext == context:
+            break
+      self.backtrace(context, from_tty)
+      curthread.switch()
+      return
 
     # Verify that the type is correct
     typestring=str(gdb.parse_and_eval(arg).type)
