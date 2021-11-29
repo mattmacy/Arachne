@@ -3,8 +3,8 @@
 #define GEN_ENTRY(name)		ALIGN_TEXT; .globl CNAME(name); \
 				.type CNAME(name),@function; CNAME(name):
 
-#define ENTRY(name)		GEN_ENTRY(name) 
-#define	END(name)		.size name, . - name
+#define ENTRY(name)		GEN_ENTRY(name)
+#define END(name)		.size name, . - name
 
 
 /**
@@ -20,25 +20,23 @@
  *     Address of the stack location to save register values to.
  */
 
-	
 ENTRY(arachne_swapcontext)
         pushq %r15
         pushq %r14
         pushq %r13
-	pushq %r12
+        pushq %r12
         pushq %rbp
         pushq %rbx
         movq %rsp, (%rsi)
 
-
 	.globl arachne_context_pushed
-arachne_context_pushed:	
-	movq (%rdi), %rsp
+arachne_context_pushed:
+        movq (%rdi), %rsp
         popq %rbx
         popq %rbp
         popq %r12
         popq %r13
         popq %r14
         popq %r15
-	retq
+        retq
 END(arachne_swapcontext)
