@@ -3,6 +3,46 @@
 
 namespace Arachne {
 
+static int
+cancel_syscall(syscall_wait_request *req, uint64_t wakeup_time)
+{
+    struct io_uring_sqe *sqe;
+    syscall_wait_request cancel_request(core.loadedContext, core.loadedContext->generation);
+    auto cycles = Cycles::rdtsc();
+
+    /* We were either interrupted or timed out.
+     * The scheduler will free the syscall request for us.
+     */
+
+    cancel_request.opcode = IORING_OP_ASYNC_CANCEL;
+    cancel_request.refcount_local = 1;
+    cancel_request.refcount = &cancel_request.refcount_local;
+
+    while ((sqe = io_uring_get_sqe(std::addressof(core.sys_io_ring))) == nullptr) {
+        yield();
+    }
+
+    io_uring_prep_cancel(sqe, req, 0);
+    io_uring_sqe_set_data(sqe, &cancel_request);
+    core.pending_requests.push_back(cancel_request);
+    io_uring_submit(std::addressof(core.sys_io_ring));
+    dispatch();
+    cancel_request.unlink();
+    if (req->result != INCOMPLETE_REQUEST) {
+          if (req->ext_arg) {
+              free(req->ext_arg);
+          }
+          delete req;
+    } else {
+        req->cancelled = true;
+    }
+    if (cycles >= wakeup_time) {
+        return -ETIME;
+    } else {
+        return -EINTR;
+    }
+}
+
 template<uint8_t opcode>
 int
 uring_syscall(int fd, void *argptr, uint64_t argint,
@@ -17,7 +57,10 @@ uring_syscall(int fd, void *argptr, uint64_t argint,
     static_assert(opcode == IORING_OP_WRITEV || opcode == IORING_OP_READV ||
                   opcode == IORING_OP_FSYNC || opcode == IORING_OP_SEND ||
                   opcode == IORING_OP_SENDMSG || opcode == IORING_OP_ACCEPT ||
-                  opcode == IORING_OP_CONNECT || opcode == IORING_OP_CLOSE);
+                  opcode == IORING_OP_CONNECT || opcode == IORING_OP_CLOSE ||
+                  opcode == IORING_OP_POLL_ADD);
+    assert(core.id >= 0 && core.localOccupiedAndCount != nullptr);
+
     switch (opcode) {
         case IORING_OP_WRITEV:
         case IORING_OP_READV:
@@ -72,24 +115,19 @@ uring_syscall(int fd, void *argptr, uint64_t argint,
          case IORING_OP_CLOSE:
              io_uring_prep_close(sqe, fd);
              break;
+         case IORING_OP_POLL_ADD:
+             io_uring_prep_poll_add(sqe, fd, argint);
+             break;
      }
     io_uring_sqe_set_data(sqe, request);
-    io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
     core.pending_requests.push_back(*request);
     io_uring_submit(std::addressof(core.sys_io_ring));
     dispatch();
-    if (unlikely(request->result == INCOMPLETE_REQUEST)) {
-        /* We were either interrupted or timed out.
-         * The scheduler will free the syscall request for us.
-         */
-        request->cancelled = true;
-        if (Cycles::rdtsc() >= wakeup_time) {
-            return -ETIMEDOUT;
-        } else {
-            return -EINTR;
-        }
-    }
     request->unlink();
+    rc = request->result;
+    if (rc == INCOMPLETE_REQUEST) {
+        return cancel_syscall(request, wakeup_time);
+    }
     rc = request->result;
     if (request->ext_arg) {
         free(request->ext_arg);
@@ -110,6 +148,7 @@ uring_syscallv(int opcount, int *fds, struct iovec **iovs, int *iovcnts, uint64_
 
     static_assert(opcode == IORING_OP_WRITEV || opcode == IORING_OP_READV || opcode == IORING_OP_FSYNC);
     off = rc = iovcnt = 0;
+
     syscall_wait_request **requests = (syscall_wait_request **)alloca(sizeof(void *) * opcount);
     for (int i = 0; i < opcount; i++) {
         while ((sqe = io_uring_get_sqe(std::addressof(core.sys_io_ring))) == nullptr) {
@@ -138,7 +177,6 @@ uring_syscallv(int opcount, int *fds, struct iovec **iovs, int *iovcnts, uint64_
         }
         io_uring_prep_rw(opcode, sqe, fds[i], iovp, iovcnt, off);
         io_uring_sqe_set_data(sqe, request);
-        io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
         core.pending_requests.push_back(*request);
         io_uring_submit(std::addressof(core.sys_io_ring));
     }
@@ -158,7 +196,7 @@ uring_syscallv(int opcount, int *fds, struct iovec **iovs, int *iovcnts, uint64_
             requests[i]->cancelled = true;
         }
         if (Cycles::rdtsc() >= wakeup_time) {
-            return -ETIMEDOUT;
+            return -ETIME;
         } else {
             return -EINTR;
         }
@@ -226,17 +264,84 @@ sendmsg(int sockfd, const struct msghdr *msg, int flags, uint64_t timeout_ms)
     return uring_syscall<IORING_OP_SENDMSG>(sockfd, (void *)(uintptr_t)msg, /* len */ 0, /* off */ 0, flags, timeout_ms);
 }
 
+#if KERNEL_VERSION >= 515
 int
 accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
     return uring_syscall<IORING_OP_ACCEPT>(sockfd, addr, (uint64_t) addrlen, /* off */ 0, 0, -1);
 }
 
+#else
+int
+accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+    int rc = uring_syscall<IORING_OP_POLL_ADD>(sockfd, nullptr, POLL_IN, /* off */ 0, 0, -1);
+    if (rc < 0) {
+        return rc;
+    }
+    return ::accept(sockfd, addr, addrlen);
+}
+#endif
+
+
+#ifdef IORING_CONNECT_WORKS
 int
 connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen, uint64_t timeout_ms)
 {
     return uring_syscall<IORING_OP_CONNECT>(sockfd, (void *)(uintptr_t)addr, addrlen, /* off */ 0, /* flags */ 0, timeout_ms);
 }
+#else
+#include <unistd.h>
+#include <fcntl.h>
+
+int
+connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen, uint64_t timeout_ms)
+{
+    int rc;
+    int flags = fcntl(sockfd, F_GETFL);
+    if (flags == -1) {
+        rc = errno;
+        assert(rc);
+        return -rc;
+    }
+
+    flags |= O_NONBLOCK;
+    rc = fcntl(sockfd, F_SETFL, flags);
+    if (rc == -1) {
+        rc = errno;
+        assert(rc);
+
+        return -rc;
+    }
+    rc = ::connect(sockfd, addr, addrlen);
+    flags &= ~O_NONBLOCK;
+    fcntl(sockfd, F_SETFL, flags);
+    if (rc == -1 && errno != EINPROGRESS) {
+        rc = errno;
+        assert(rc);
+
+        return -rc;
+    }
+    if (rc == 0) {
+        return rc;
+    }
+
+    rc = uring_syscall<IORING_OP_POLL_ADD>(sockfd, nullptr, POLL_IN|POLL_OUT|POLL_ERR, /* off */ 0, 0, timeout_ms);
+    if (rc < 0) {
+        return rc;
+    }
+    int error;
+    socklen_t errlen = sizeof(int);
+    rc  = getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &errlen);
+    if (rc == -1) {
+        rc = errno;
+        assert(rc);
+
+        return -rc;
+    }
+    return -error;
+}
+#endif
 
 int
 close(int fd)
@@ -254,9 +359,7 @@ check_for_completions(struct io_uring *ring)
         request->result = cqe->res;
 
         io_uring_cqe_seen(ring, cqe);
-
         if (unlikely(request->cancelled)) {
-            request->unlink();
             if (request->ext_arg) {
                 free(request->ext_arg);
             }

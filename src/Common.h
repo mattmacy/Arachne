@@ -141,6 +141,7 @@ struct Core {
      */
     struct io_uring sys_io_ring;
 
+    uint64_t last_sys_check = 0;
 
     intrusive_list<syscall_wait_request> pending_requests;
 

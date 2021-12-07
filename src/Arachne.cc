@@ -620,6 +620,11 @@ checkSysRing()
 {
     if (core.pending_requests.empty())
         return;
+    auto cycles = Cycles::rdtsc();
+
+    if (core.last_sys_check > cycles - Cycles::fromMicroseconds(2))
+        return;
+    core.last_sys_check = cycles;
     check_for_completions(std::addressof(core.sys_io_ring));
 }
 
